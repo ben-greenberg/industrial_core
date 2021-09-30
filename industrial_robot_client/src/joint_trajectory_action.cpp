@@ -128,8 +128,8 @@ void JointTrajectoryAction::goalCB(JointTractoryActionServer::GoalHandle gh)
     if (industrial_utils::isSimilar(joint_names_, gh.getGoal()->trajectory.joint_names))
     {
 
-      // Cancels the currently active goal.
-      if (has_active_goal_)
+      // Cancels the currently active goal if the new goal is supposed to be a fresh motion (not spliced)
+      if (has_active_goal_ && (std::stoi(gh.getGoal()->trajectory.header.frame_id) == 0))
       {
         ROS_WARN_NAMED(name_, "Received new goal, canceling current goal");
         abortGoal();
