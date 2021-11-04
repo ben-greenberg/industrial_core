@@ -45,6 +45,7 @@ else:
 from sensor_msgs.msg import JointState
 from control_msgs.msg import FollowJointTrajectoryFeedback
 from industrial_msgs.msg import RobotStatus
+from std_msgs.msg import Int32
 
 # Subscribe
 from trajectory_msgs.msg import JointTrajectory
@@ -83,6 +84,10 @@ class MotionControllerSimulator():
         self.joint_positions = initial_joint_state
         rospy.logdebug("Setting initial joint state: %s", str(initial_joint_state))
 
+        # Published to joint_path_current_point
+        rospy.logdebug("Creating joint state publisher")
+        self.current_point_pub = rospy.Publisher('joint_path_current_point', Int32, queue_size=1)
+
         # Initialize motion buffer (contains joint position lists)
         self.motion_buffer = Queue.Queue(buffer_size)
         rospy.logdebug("Setting motion buffer size: %i", buffer_size)
@@ -92,6 +97,10 @@ class MotionControllerSimulator():
 
         # Stop signal
         self.sig_stop = False
+
+        # Current Traj/Point variables
+        self.current_traj_ = []
+        self.current_goal_point_itr = 0
 
         # Motion thread
         self.motion_thread = threading.Thread(target=self._motion_worker)
@@ -187,10 +196,12 @@ class MotionControllerSimulator():
         while not self.sig_shutdown:
             try:
                 current_goal_point = self.motion_buffer.get()
+                self.current_goal_point_itr +=1
 
                 # If the current time from start is less than the last, then it's a new trajectory
                 if current_goal_point.time_from_start < last_goal_point.time_from_start:
                     move_duration = current_goal_point.time_from_start
+                    self.current_goal_point_itr = 0
                 # Else it's an existing trajectory and subtract the two
                 else:
                     # If current move duration is greater than update_duration, move arm to interpolated joint position
@@ -209,6 +220,9 @@ class MotionControllerSimulator():
                             move_duration = current_goal_point.time_from_start - intermediate_goal_point.time_from_start
 
                 self._move_to(current_goal_point, move_duration)
+                current_point_msg = Int32()
+                current_point_msg.data = self.current_goal_point_itr
+                self.current_point_pub.publish(current_point_msg)
                 last_goal_point = copy.deepcopy(current_goal_point)
 
             except Exception as e:
@@ -389,11 +403,25 @@ class IndustrialRobotSimulatorNode():
             if self.motion_ctrl.is_in_motion():
                 if len(msg_in.points) > 0:
                     rospy.logerr('Received trajectory while still in motion, trajectory splicing not supported')
+
+                    # calc new trajectory
+                    # find the location of the shared state between the old and new trajectories
+                    if msg_in.points[0] in self.current_traj_:
+                        splice_position = self.current_traj_.index(msg_in.points[0])
+                        rospy.logerr('Element present at index %d', splice_position)
+                        self.current_traj_[:splice_position]
+                        self.current_traj_.append(msg_in.points)
+
+                    else:
+                        rospy.logerr('Element not found')
+                        self.motion_ctrl.stop()
                 else:
                     rospy.logdebug('Received empty trajectory while still in motion, stopping current trajectory')
                 self.motion_ctrl.stop()
 
             else:
+                self.current_goal_point_itr = 0
+                self.current_traj_ = msg_in
                 for point in msg_in.points:
                     point = self._to_controller_order(msg_in.joint_names, point)
                     self.motion_ctrl.add_motion_waypoint(point)
