@@ -158,10 +158,18 @@ void JointTrajectoryAction::goalCB(JointTractoryActionServer::GoalHandle gh)
   }
   else
   {
-    ROS_ERROR_NAMED(name_, "Joint trajectory action failed on empty trajectory");
-    control_msgs::FollowJointTrajectoryResult rslt;
-    rslt.error_code = control_msgs::FollowJointTrajectoryResult::INVALID_GOAL;
-    gh.setRejected(rslt, "Empty trajectory");
+    if (has_active_goal_)
+    {
+      ROS_WARN_NAMED(name_, "Received empty goal, aborting current goal");
+      abortGoal();
+    }
+    else
+    {
+      ROS_ERROR_NAMED(name_, "Joint trajectory action failed on empty trajectory");
+      control_msgs::FollowJointTrajectoryResult rslt;
+      rslt.error_code = control_msgs::FollowJointTrajectoryResult::INVALID_GOAL;
+      gh.setRejected(rslt, "Empty trajectory");
+    }
   }
 
   // Adding some informational log messages to indicate unsupported goal constraints
